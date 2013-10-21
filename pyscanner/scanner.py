@@ -47,21 +47,14 @@ from common.timing import print_timing
 #import datetime     #time and date handling
 from collections import OrderedDict as Odict #ordered dictionary (needs python 2.7+)
 
-print 'checkpoint2'
-#import scipy as sp
-print 'checkpoint3'
 import numpy as np
-print 'checkpoint4'
 # Import MULTINEST extension module (must be installed)
 from multinest import nestwrapper   
-print 'checkpoint10'
 # Import PYSUSY modules
 from common.listsampler import listwrapper #List sampling driver
-print 'checkpoint9'
 
 #Import MPI module
 from mpi4py import MPI
-print 'checkpoint10'
 
 class Usage(Exception):
     def __init__(self, msg):
@@ -69,13 +62,29 @@ class Usage(Exception):
         
 class odict(Odict):
     """Modified Ordered Dictionary"""
-    def setvalues(self,list):
-        """Assign 'list' to the values of the dictionary, in the order
+    def setvalues(self,listv):
+        """Assign 'listv' to the values of the dictionary, in the order
         defined by the ordering of the dictionary"""
         #print list
         for i,key in enumerate(self.keys()):
-            self[key] = list[i]
-        
+            try:
+                self[key] = listv[i]
+            except IndexError:
+                if i>=len(listv): 
+                    #more entries in list than dict, but this is ok, the
+                    #entries without new values may be assigned some by the
+                    #user, i.e. if they are linked to the scanned values. 
+                    break
+                else:
+                    print "Error setting value in ordered dictionary! Dumping \
+extra output..."
+                    print 'index: ', i
+                    print 'dict length:', len(self.keys())
+                    print 'list length:', len(listv)
+                    print 'key:   ', key
+                    print 'dict: ', self.keys()
+                    print 'list: ', listv
+                    raise
 def initMPI():
     """Initialise MPI bindings
     If MPI is being handled by this wrapper (rather than by the 
@@ -179,7 +188,7 @@ for post-scan analysis:\n'
         return ' '.join(line)+'\n'
     
     def writetiminginfo(self,timingbuffer):
-        ftime = open(self.outputpathbasename+'.timing','a')             #open the info file to write the names of the output columns
+        ftime = open('{0}.timing_{1}'.format(self.outputpathbasename,self.rank),'a')             #open the info file to write the names of the output columns
         txt = ''
         for timinginfo in timingbuffer:
             txt += self.stringifyline(timinginfo)                       #generate line of
@@ -209,7 +218,7 @@ for post-scan analysis:\n'
         if self.printing: print "paramvector:", paramvector
  
         #---Put the scaled parameters back into cube--------------------
-        cube[:self.npars] = paramvector.values()                        #there should be ndims of these. ndims+x will contain nothing, but later we will store extra output, like observables, in these slots. 
+        cube[:self.npars] = paramvector.values()[:self.npars]             #there should be ndims of these. ndims+x will contain nothing, but later we will store extra output, like observables, in these slots. 
                 
         #---Give parameters to Simulator, which computes likelihoods----
         tm1 = time.time() 
@@ -312,7 +321,16 @@ for post-scan analysis:\n'
         #======================================================
         #We ditch the ndims, npar and context parameters because we
         #keep track of this stuff via the Scan object.
-        return self.getloglike(cube)    #returns cube, lnew
+
+        print "size of 'cube' from multinest:", len(cube)
+        print 'values:', cube
+ 
+        newcube, lnew = self.getloglike(cube)    #returns cube, lnew
+
+        print "size of 'cube' returned to multinest:", len(cube)
+        print 'values:', cube
+
+        return newcube, lnew
  
     def dumper(nSamples, nlive, nPar, physLive, posterior, paramConstr, maxLogLike, logZ):
         """Extra information dump from multinest
@@ -395,11 +413,18 @@ ter generators or MPI libraries (outdirlength: len({0})={1})".format(outdir,outd
             self.prior = None if self.skipprior else self.prior         
         self.cubedict = odict()                                         #Must be an ORDERED dictionary!!!
         for param in self.parorder:
-            self.cubedict[param] = 0                                    #Initialise order of cubedict to match parorder
-            """self.SetupObjects['parorder'] = (for example) ['M0','M12',...]
-            self.cubedict = {   'M0'    :1909.59814453,
-                                'M12'   :1221.10510254,
-                                ...}"""
+            try:
+                self.cubedict[param] = 0                                    #Initialise order of cubedict to match parorder
+                """self.SetupObjects['parorder'] = (for example) ['M0','M12',...]
+                self.cubedict = {   'M0'    :1909.59814453,
+                                    'M12'   :1221.10510254,
+                                    ...}"""
+            except TypeError:
+                print "Error creating 'cubedict', may be a problem with 'parorder'\
+ as defined in the master config file. Dumping extra output..."
+                print 'param:', param
+                print 'parorder:', self.parorder
+                raise
         self.timingbuffer = []
         self.bufferlength = 1000                                        #output timing info to file every 'bufferlength' iterations.
         retry = False                                                   #rerun the point if an error occurs
@@ -544,7 +569,7 @@ resolve BadModelPointError.'
                     mnest_args['p_ncdims'] = mnest_args['p_ndims']  #so set nCdims=ndims as a default option
             except KeyError:
                 print('PySUSY Warning for Multinest: nCdims not specified in Multinest config. Setting nCdims=ndims to resolve.')
-                mnest_args['p_ncdims'] = 2   #If not, give it this default value.
+                mnest_args['p_ncdims'] = mnest_args['p_ndims']   #If not, give it this default value.
             mnest_args['p_root']     = os.path.abspath(self.outputpathbasename)
             print 'p_root:', mnest_args['p_root']
             print 'p_initmpi:', mnest_args['p_initmpi']
